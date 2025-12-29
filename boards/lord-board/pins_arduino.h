@@ -64,16 +64,15 @@ static const uint8_t MISO = 11;
 #define MINBRIGHT (uint8_t)1
 
 // ---------------- XPT2046 Touch  ---------------
-#define TOUCH_XPT2046_SPI
+#define USE_TFT_eSPI_TOUCH 1 // touchscreen uses same tft spi bus
+#define HAS_TOUCH 1
+#define TOUCH_INT -1
 #define TOUCH_CS 38
-#define TOUCH_IRQ 39
-#define XPT2046_TOUCH_CONFIG_INT_GPIO_NUM 39
-#define XPT2046_SPI_BUS_MISO_IO_NUM MISO
-#define XPT2046_SPI_BUS_MOSI_IO_NUM MOSI
-#define XPT2046_SPI_BUS_SCLK_IO_NUM SCK
-#define XPT2046_SPI_CONFIG_CS_GPIO_NUM 38
+#define BTN_ACT LOW
+#define DEEPSLEEP_WAKEUP_PIN 0
 
 // ---------------- SD CARD --------------------
+// #define HAS_SDCARD 0
 #define SDCARD_CS 21
 #define SDCARD_SCK SCK
 #define SDCARD_MISO MISO

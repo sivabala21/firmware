@@ -1,12 +1,6 @@
 #include "core/powerSave.h"
 #include "core/utils.h"
-#include <CYD28_TouchscreenR.h>
-#include <driver/adc.h>
-#include <esp_adc_cal.h>
 #include <interface.h>
-#include <soc/adc_channel.h>
-#include <soc/soc_caps.h>
-CYD28_TouchR touch(320, 240);
 
 /***************************************************************************************
 ** Function name: _setup_gpio()
@@ -14,18 +8,29 @@ CYD28_TouchR touch(320, 240);
 ** Description:   initial setup for the device
 ***************************************************************************************/
 void _setup_gpio() {
-    bruceConfig.colorInverted = 0;
-    pinMode(CC1101_SS_PIN, OUTPUT);
-    pinMode(NRF24_SS_PIN, OUTPUT);
-    digitalWrite(CC1101_SS_PIN, HIGH);
-    digitalWrite(NRF24_SS_PIN, HIGH);
-    pinMode(TFT_BL, OUTPUT);
 
-    bruceConfig.rfModule = CC1101_SPI_MODULE;
-    bruceConfig.irRx = RXLED;
-    // bruceConfig.irTx = LED;
-    Wire.setPins(SDA, SCL);
-    Wire.begin();
+    pinMode(TFT_CS, OUTPUT);
+    digitalWrite(TFT_CS, HIGH);
+    pinMode(TFT_MOSI, OUTPUT);
+    digitalWrite(TFT_MOSI, HIGH);
+    pinMode(TFT_SCLK, OUTPUT);
+
+    pinMode(TFT_BL, OUTPUT);
+    digitalWrite(TFT_BL, HIGH);
+    pinMode(TFT_RST, OUTPUT);
+    pinMode(TFT_DC, OUTPUT);
+    digitalWrite(TFT_DC, HIGH);
+    pinMode(NRF24_SS_PIN, OUTPUT);
+    pinMode(CC1101_SS_PIN, OUTPUT);
+    pinMode(SDCARD_CS, OUTPUT);
+    pinMode(TFT_CS, OUTPUT);
+
+    digitalWrite(NRF24_SS_PIN, HIGH);
+    digitalWrite(CC1101_SS_PIN, HIGH);
+    digitalWrite(SDCARD_CS, HIGH);
+    // digitalWrite(W5500_SS_PIN, HIGH);
+    digitalWrite(TFT_CS, HIGH);
+    bruceConfig.colorInverted = 0;
 }
 
 /***************************************************************************************
@@ -34,10 +39,32 @@ void _setup_gpio() {
 ** Description:   second stage gpio setup to make a few functions work
 ***************************************************************************************/
 void _post_setup_gpio() {
-    if (!touch.begin(&tft.getSPIinstance())) {
-        Serial.println("Touch IC not Started");
-        log_i("Touch IC not Started");
-    } else Serial.println("Touch IC Started");
+    pinMode(TOUCH_CS, OUTPUT);
+    uint16_t calData[5];
+    File caldata = LittleFS.open("/calData", "r");
+
+    if (!caldata) {
+        tft.setRotation(ROTATION);
+        tft.calibrateTouch(calData, TFT_WHITE, TFT_BLACK, 10);
+
+        caldata = LittleFS.open("/calData", "w");
+        if (caldata) {
+            caldata.printf(
+                "%d\n%d\n%d\n%d\n%d\n", calData[0], calData[1], calData[2], calData[3], calData[4]
+            );
+            caldata.close();
+        }
+    } else {
+        Serial.print("\ntft Calibration data: ");
+        for (int i = 0; i < 5; i++) {
+            String line = caldata.readStringUntil('\n');
+            calData[i] = line.toInt();
+            Serial.printf("%d, ", calData[i]);
+        }
+        Serial.println();
+        caldata.close();
+    }
+    tft.setTouch(calData);
 }
 
 /***************************************************************************************
@@ -67,61 +94,50 @@ void _setBrightness(uint8_t brightval) {
 **********************************************************************/
 
 void InputHandler(void) {
-    static long tm = millis();
-
-    // debounce touch events
-    if (millis() - tm > 300 || LongPress) {
-        if (touch.touched()) {
-            auto raw = touch.getPointScaled();
-            tm = millis();
-
-            // --- Rotation compensation ---
-            int16_t tx = raw.x;
-            int16_t ty = raw.y;
-
-            switch (bruceConfig.rotation) {
-                case 2: // portrait
-                {
-                    int tmp = tx;
-                    tx = tftWidth - ty;
-                    ty = tmp;
-                } break;
-                case 3: // landscape
-                    // no swap needed
-                    break;
-                case 0: // portrait inverted
-                {
-                    int tmp = tx;
-                    tx = ty;
-                    ty = (tftHeight + 0) - tmp; // calibrate in real time
-                } break;
-                case 1:                        // landscape inverted
-                    ty = (tftHeight + 0) - ty; // calibrate in real time
-                    tx = tftWidth - tx;
-                    break;
-            }
-
-            // Serial.printf( "Touch: raw=(%d,%d) mapped=(%d,%d) rot=%d\n", raw.x, raw.y, tx, ty,
-            // bruceConfig.rotation" );
-
-            // wake screen if off
-            if (!wakeUpScreen()) {
-                AnyKeyPress = true;
-            } else {
-                return;
-            }
-
-            // store in global touch point
-            touchPoint.x = tx;
-            touchPoint.y = ty;
-            touchPoint.pressed = true;
-
-            // optional: heatmap logging
-            touchHeatMap(touchPoint);
-
-        } else {
-            touchPoint.pressed = false;
+    static unsigned long tm = 0;
+    if (millis() - tm < 200 && !LongPress) return;
+    TouchPoint t;
+    checkPowerSaveTime();
+    bool _IH_touched = tft.getTouch(&t.x, &t.y);
+    if (_IH_touched) {
+        NextPress = false;
+        PrevPress = false;
+        UpPress = false;
+        DownPress = false;
+        SelPress = false;
+        EscPress = false;
+        AnyKeyPress = false;
+        NextPagePress = false;
+        PrevPagePress = false;
+        touchPoint.pressed = false;
+        _IH_touched = false;
+        Serial.printf("\nRAW: Touch Pressed on x=%d, y=%d", t.x, t.y);
+        if (bruceConfigPins.rotation == 3) {
+            t.y = (tftHeight + 20) - t.y;
+            t.x = tftWidth - t.x;
         }
+        if (bruceConfigPins.rotation == 0) {
+            uint16_t tmp = t.x;
+            t.x = map((tftHeight + 20) - t.y, 0, 320, 0, 240);
+            t.y = map(tmp, 0, 240, 0, 320);
+        }
+        if (bruceConfigPins.rotation == 2) {
+            uint16_t tmp = t.x;
+            t.x = map(t.y, 0, 320, 0, 240);
+            t.y = map(tftWidth - tmp, 0, 240, 0, 320);
+        }
+
+        Serial.printf("\nROT: Touch Pressed on x=%d, y=%d, rot=%d\n", t.x, t.y, bruceConfigPins.rotation);
+
+        if (!wakeUpScreen()) AnyKeyPress = true;
+        else return;
+
+        // Touch point global variable
+        touchPoint.x = t.x;
+        touchPoint.y = t.y;
+        touchPoint.pressed = true;
+        touchHeatMap(touchPoint);
+        tm = millis();
     }
 }
 
